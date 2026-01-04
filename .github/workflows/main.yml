@@ -35,8 +35,9 @@ jobs:
         echo Connecting to Tailscale network...
         "C:\Program Files\Tailscale\tailscale.exe" up --authkey=%TS_AUTH_KEY% --hostname=github-rdp
         
-        REM Get Tailscale IP
-        for /f "tokens=*" %%i in ('"C:\Program Files\Tailscale\tailscale.exe" ip -4') do set TS_IP=%%i
+        REM Get Tailscale IP (PROPERLY FORMATTED)
+        "C:\Program Files\Tailscale\tailscale.exe" ip -4 > ip.txt
+        set /p TS_IP=<ip.txt
         echo Tailscale IP: %TS_IP%
         
         echo ========================================
@@ -51,7 +52,7 @@ jobs:
         netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
         
         REM Start Terminal Services (ignore if already running)
-        net start TermService 2>nul || echo Service already running or error starting
+        net start TermService 2>nul || echo Service already running
         
         echo ========================================
         echo 3. Creating user...
@@ -66,24 +67,27 @@ jobs:
         echo ========================================
         echo 4. RDP READY TO CONNECT
         echo ========================================
+        echo IMPORTANT: Use dots (.) not commas in IP!
+        echo.
         echo IP Address: %TS_IP%
         echo Username: rdpuser
         echo Password: GitHubRDP%RAND%
         echo.
-        echo Connect using: mstsc /v:%TS_IP%
+        echo Connect using:
+        echo mstsc /v:%TS_IP%
         echo.
         echo This session will run for 6 hours
         echo ========================================
         
-    - name: Keep RDP Session Alive
-      shell: cmd
+    - name: Keep RDP Session Alive (FIXED)
+      shell: powershell
       run: |
-        @echo off
-        echo RDP session is now active...
-        echo Keeping alive for 6 hours...
-        echo.
+        Write-Host "RDP session is now active..."
+        Write-Host "Keeping alive for 6 hours..."
+        Write-Host ""
         
-        REM Simple keep-alive - run for 6 hours (21600 seconds)
-        timeout /t 21600 /nobreak
+        # FIXED: Use PowerShell sleep instead of timeout
+        # 6 hours = 21600 seconds
+        Start-Sleep -Seconds 21600
         
-        echo RDP session ended after 6 hours.
+        Write-Host "RDP session ended after 6 hours."
