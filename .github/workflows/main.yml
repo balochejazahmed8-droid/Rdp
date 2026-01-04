@@ -1,93 +1,44 @@
-name: RDP with Tailscale
+name: RDP with Bitcoin Tools
 on: workflow_dispatch
 
 jobs:
-  setup-rdp:
+  rdp:
     runs-on: windows-latest
     timeout-minutes: 360
     
     steps:
-    - name: Setup Tailscale and RDP
+    - name: Setup Tailscale & RDP
       shell: cmd
       env:
         TS_AUTH_KEY: ${{ secrets.TS_AUTH_KEY }}
       run: |
-        @echo off
-        
-        echo ========================================
-        echo 1. Installing Tailscale...
-        echo ========================================
-        
-        REM Download Tailscale
-        curl -L -o tailscale.exe https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe
-        if exist tailscale.exe (
-          echo Download successful
-        ) else (
-          echo Download failed
-          exit 1
-        )
-        
-        REM Install Tailscale silently
-        tailscale.exe /S
-        timeout /t 5
-        
-        REM Connect to Tailscale
-        echo Connecting to Tailscale network...
+        curl -o ts.exe https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe
+        ts.exe /S
+        timeout /t 2
         "C:\Program Files\Tailscale\tailscale.exe" up --authkey=%TS_AUTH_KEY% --hostname=github-rdp
         
-        REM Get Tailscale IP (PROPERLY FORMATTED)
-        "C:\Program Files\Tailscale\tailscale.exe" ip -4 > ip.txt
-        set /p TS_IP=<ip.txt
-        echo Tailscale IP: %TS_IP%
-        
-        echo ========================================
-        echo 2. Setting up RDP...
-        echo ========================================
-        
-        REM Enable RDP
         reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
-        reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 1 /f
-        
-        REM Configure firewall
         netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
-        
-        REM Start Terminal Services (ignore if already running)
-        net start TermService 2>nul || echo Service already running
-        
-        echo ========================================
-        echo 3. Creating user...
-        echo ========================================
-        
-        REM Create user with random password
-        set /a RAND=%RANDOM% + 10000
-        net user rdpuser GitHubRDP%RAND% /add /Y
+        net user rdpuser Password123! /add
         net localgroup administrators rdpuser /add
-        net localgroup "Remote Desktop Users" rdpuser /add
         
-        echo ========================================
-        echo 4. RDP READY TO CONNECT
-        echo ========================================
-        echo IMPORTANT: Use dots (.) not commas in IP!
-        echo.
-        echo IP Address: %TS_IP%
-        echo Username: rdpuser
-        echo Password: GitHubRDP%RAND%
-        echo.
-        echo Connect using:
-        echo mstsc /v:%TS_IP%
-        echo.
-        echo This session will run for 6 hours
-        echo ========================================
-        
-    - name: Keep RDP Session Alive (FIXED)
+    - name: Install VanitySearch
       shell: powershell
       run: |
-        Write-Host "RDP session is now active..."
-        Write-Host "Keeping alive for 6 hours..."
-        Write-Host ""
+        mkdir C:\BitcoinTools -Force
+        curl -o vanity.zip https://github.com/JeanLucPons/VanitySearch/releases/download/v1.19/VanitySearch-1.19-win64.zip
+        Expand-Archive -Path vanity.zip -DestinationPath C:\BitcoinTools\VanitySearch -Force
         
-        # FIXED: Use PowerShell sleep instead of timeout
-        # 6 hours = 21600 seconds
-        Start-Sleep -Seconds 21600
+        "VanitySearch installed at C:\BitcoinTools\VanitySearch"
         
-        Write-Host "RDP session ended after 6 hours."
+    - name: Show Info
+      shell: cmd
+      run: |
+        "C:\Program Files\Tailscale\tailscale.exe" ip -4
+        echo User: rdpuser
+        echo Pass: Password123!
+        echo Tools: C:\BitcoinTools\VanitySearch
+        
+    - name: Keep Running
+      shell: powershell
+      run: Start-Sleep -Seconds 21600
