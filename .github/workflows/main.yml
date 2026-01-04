@@ -11,50 +11,155 @@ jobs:
     - name: 📦 Checkout
       uses: actions/checkout@v4
     
-    - name: 🔧 Install & Setup Tailscale
+    - name: 🔧 Install Tailscale (WORKING VERSION)
       shell: powershell
       env:
         TS_AUTH_KEY: ${{ secrets.TS_AUTH_KEY }}
       run: |
-        # Download Tailscale using curl (most reliable)
-        curl.exe -fsSL -o tailscale.exe https://pkgs.tailscale.com/stable/tailscale-setup-amd64-latest.exe
+        Write-Host "=== Installing Tailscale ==="
         
-        # Install silently
-        .\tailscale.exe /S
-        Start-Sleep -Seconds 10
+        # CORRECT URL for Windows installer
+        $url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
+        Write-Host "Downloading from: $url"
         
-        # Connect to Tailscale
-        & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$env:TS_AUTH_KEY" --hostname="github-rdp"
+        # Method 1: Using Invoke-WebRequest with explicit parameters
+        try {
+            Invoke-WebRequest -Uri $url -OutFile "tailscale-setup.exe" -UseBasicParsing
+            Write-Host "✅ Download successful"
+        } catch {
+            Write-Host "Trying alternative method..."
+            # Method 2: Using .NET WebClient
+            (New-Object System.Net.WebClient).DownloadFile($url, "tailscale-setup.exe")
+        }
         
-        # Get IP
+        # Verify download
+        if (Test-Path "tailscale-setup.exe") {
+            $size = (Get-Item "tailscale-setup.exe").Length
+            Write-Host "Downloaded file size: $size bytes"
+        } else {
+            Write-Error "❌ Failed to download Tailscale"
+            exit 1
+        }
+        
+        # Install Tailscale (silent mode)
+        Write-Host "Installing Tailscale..."
+        Start-Process -FilePath ".\tailscale-setup.exe" -ArgumentList "/S" -Wait -NoNewWindow
+        Start-Sleep -Seconds 15
+        
+        # Wait for installation to complete
+        Write-Host "Waiting for installation..."
+        $maxAttempts = 10
+        $attempt = 0
+        while ($attempt -lt $maxAttempts) {
+            if (Test-Path "C:\Program Files\Tailscale\tailscale.exe") {
+                Write-Host "✅ Tailscale installed successfully"
+                break
+            }
+            $attempt++
+            Write-Host "Waiting... attempt $attempt/$maxAttempts"
+            Start-Sleep -Seconds 5
+        }
+        
+        if (-not (Test-Path "C:\Program Files\Tailscale\tailscale.exe")) {
+            Write-Error "❌ Tailscale installation failed"
+            exit 1
+        }
+        
+        # Connect to Tailscale network
+        Write-Host "Connecting to Tailscale..."
+        & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$env:TS_AUTH_KEY" --hostname="github-rdp-${{ github.run_id }}"
+        
+        # Verify connection
         $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-        echo "Tailscale IP: $ip"
+        if ($ip) {
+            Write-Host "✅ Connected! Tailscale IP: $ip"
+        } else {
+            Write-Error "❌ Failed to get Tailscale IP"
+            & "C:\Program Files\Tailscale\tailscale.exe" status
+            exit 1
+        }
     
-    - name: 🪟 Setup RDP
+    - name: 🪟 Enable RDP
       shell: powershell
       run: |
-        # Enable RDP
+        Write-Host "=== Enabling Remote Desktop ==="
+        
+        # Enable RDP in registry
         reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+        
+        # Enable Network Level Authentication
+        reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 1 /f
+        
+        # Configure Windows Firewall
         netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
         
-        # Create user
-        net user githubuser "RDP@GitHub123" /add
-        net localgroup administrators githubuser /add
+        # Start Terminal Services
+        net start TermService
+        
+        Write-Host "✅ RDP enabled successfully"
     
-    - name: 📡 Show Connection Info
+    - name: 👤 Create User Account
       shell: powershell
       run: |
+        Write-Host "=== Creating User Account ==="
+        
+        # Generate random password
+        $password = "GitHubRDP$((Get-Random -Minimum 1000 -Maximum 9999))"
+        $username = "rdpuser"
+        
+        # Create user
+        net user $username $password /add /Y
+        net localgroup administrators $username /add
+        net localgroup "Remote Desktop Users" $username /add
+        
+        Write-Host "✅ User created:"
+        Write-Host "Username: $username"
+        Write-Host "Password: $password"
+        
+        # Save to file for reference
+        "Username: $username`nPassword: $password" | Out-File "C:\Users\Public\rdp-info.txt"
+    
+    - name: 📊 Display Connection Info
+      shell: powershell
+      run: |
+        Write-Host "========================================"
+        Write-Host "🎉 RDP SETUP COMPLETE"
+        Write-Host "========================================"
+        
+        # Get Tailscale IP
         $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-        echo "========================================"
-        echo "✅ RDP READY TO CONNECT"
-        echo "========================================"
-        echo "IP: $ip"
-        echo "User: githubuser"
-        echo "Pass: RDP@GitHub123"
-        echo "========================================"
+        
+        Write-Host ""
+        Write-Host "🌐 CONNECTION DETAILS:"
+        Write-Host "IP Address: $ip"
+        Write-Host "Port: 3389"
+        Write-Host "Username: rdpuser"
+        Write-Host "Password: Check previous step"
+        Write-Host ""
+        Write-Host "💻 TO CONNECT:"
+        Write-Host "1. Install Tailscale on YOUR computer"
+        Write-Host "2. Login to same Tailscale account"
+        Write-Host "3. Run: mstsc /v:$ip"
+        Write-Host ""
+        Write-Host "⏰ This session will run for 6 hours"
+        Write-Host "========================================"
     
     - name: ⏳ Keep Alive
       shell: powershell
       run: |
-        # Run for 6 hours
-        timeout /t 21600
+        Write-Host "🔄 RDP Session Active - Keeping alive for 6 hours..."
+        Write-Host "IP Address:"
+        & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+        
+        # Keep the workflow running
+        # 6 hours = 21600 seconds
+        $counter = 0
+        while ($counter -lt 21600) {
+            # Show heartbeat every 5 minutes
+            if (($counter % 300) -eq 0) {
+                $minutes = $counter / 60
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Session active for $minutes minutes"
+            }
+            $counter++
+            Start-Sleep -Seconds 1
+        }
