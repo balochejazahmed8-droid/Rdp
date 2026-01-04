@@ -14,103 +14,130 @@ jobs:
       run: |
         Write-Host "Step 1: Installing Tailscale..."
         
+        # Download Tailscale using different method
         $url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
-        Invoke-WebRequest -Uri $url -OutFile "tailscale.exe" -UseBasicParsing
-        .\tailscale.exe /S
-        Start-Sleep -Seconds 5
+        $installer = "C:\Windows\Temp\tailscale-setup.exe"
         
-        & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$env:TS_AUTH_KEY" --hostname="github-rdp"
-        $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-        Write-Host "IP: $ip"
-        $ip | Out-File -FilePath "ip.txt"
+        Write-Host "Downloading Tailscale..."
+        (New-Object System.Net.WebClient).DownloadFile($url, $installer)
+        
+        # Install Tailscale with more wait time
+        Write-Host "Installing Tailscale (this may take a moment)..."
+        Start-Process -FilePath $installer -ArgumentList "/S" -Wait -NoNewWindow
+        
+        # Wait longer for installation
+        Write-Host "Waiting for installation to complete..."
+        Start-Sleep -Seconds 15
+        
+        # Check if installed
+        $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
+        if (Test-Path $tailscalePath) {
+            Write-Host "✅ Tailscale installed successfully at: $tailscalePath"
+        } else {
+            Write-Host "⚠️ Tailscale not found in Program Files, checking other locations..."
+            
+            # Try alternative locations
+            $possiblePaths = @(
+                "C:\Program Files\Tailscale\tailscale.exe",
+                "C:\Program Files (x86)\Tailscale\tailscale.exe",
+                "C:\Users\runneradmin\AppData\Local\Tailscale\tailscale.exe"
+            )
+            
+            $found = $false
+            foreach ($path in $possiblePaths) {
+                if (Test-Path $path) {
+                    $tailscalePath = $path
+                    Write-Host "Found at: $path"
+                    $found = $true
+                    break
+                }
+            }
+            
+            if (-not $found) {
+                Write-Host "❌ Tailscale installation failed. Trying alternative installation method..."
+                
+                # Try winget if available
+                try {
+                    winget install Tailscale.Tailscale --silent --accept-package-agreements --accept-source-agreements
+                    Start-Sleep -Seconds 10
+                } catch {
+                    Write-Host "Winget installation failed, continuing without Tailscale"
+                }
+            }
+        }
+        
+        # Connect to Tailscale (if found)
+        if (Test-Path $tailscalePath) {
+            Write-Host "Connecting to Tailscale network..."
+            & $tailscalePath up --authkey="$env:TS_AUTH_KEY" --hostname="github-rdp"
+            
+            # Get IP
+            $ip = & $tailscalePath ip -4
+            Write-Host "✅ Tailscale IP: $ip"
+            $ip | Out-File -FilePath "ip.txt" -Encoding ASCII
+        } else {
+            Write-Host "⚠️ Cannot connect Tailscale - no executable found"
+            "TAILSCALE_NOT_INSTALLED" | Out-File -FilePath "ip.txt" -Encoding ASCII
+        }
         
     - name: Enable RDP
       shell: powershell
       run: |
         Write-Host "Step 2: Enabling RDP..."
         
+        # Enable RDP
         Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+        
+        # Configure firewall
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
         
+        # Create user
         $password = ConvertTo-SecureString "Password123!" -AsPlainText -Force
-        New-LocalUser -Name "rdpuser" -Password $password -ErrorAction SilentlyContinue
-        Add-LocalGroupMember -Group "Administrators" -Member "rdpuser" -ErrorAction SilentlyContinue
+        $username = "rdpuser"
         
-        Write-Host "RDP enabled"
+        # Delete user if exists
+        Remove-LocalUser -Name $username -ErrorAction SilentlyContinue
+        
+        # Create new user
+        New-LocalUser -Name $username -Password $password -ErrorAction Stop
+        Add-LocalGroupMember -Group "Administrators" -Member $username
+        Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
+        
+        Write-Host "✅ RDP user created: $username"
         
     - name: Setup Bitcoin Tools
       shell: powershell
       run: |
         Write-Host "Step 3: Setting up Bitcoin tools..."
         
-        # Create directory
+        # Create Bitcoin tools directory
         $toolsDir = "C:\BitcoinTools"
         New-Item -ItemType Directory -Path $toolsDir -Force
         
-        # Create README without heredoc - using simple string concatenation
+        # Create simple README
         $readmeContent = "BITCOIN VANITY ADDRESS TOOLS SETUP`r`n"
         $readmeContent += "==================================`r`n`r`n"
-        $readmeContent += "1. VanitySearch (Main Tool)`r`n"
-        $readmeContent += "   Download from: https://github.com/JeanLucPons/VanitySearch/releases`r`n"
-        $readmeContent += "   Save as: C:\BitcoinTools\VanitySearch.exe`r`n`r`n"
-        $readmeContent += "2. Quick Start Commands:`r`n"
+        $readmeContent += "1. Download VanitySearch from:`r`n"
+        $readmeContent += "   https://github.com/JeanLucPons/VanitySearch/releases`r`n`r`n"
+        $readmeContent += "2. Save to: C:\\BitcoinTools\\`r`n`r`n"
+        $readmeContent += "3. Run in Command Prompt:`r`n"
         $readmeContent += "   cd C:\BitcoinTools`r`n"
-        $readmeContent += "   VanitySearch.exe -t 8 -o results.txt 1YourPattern`r`n`r`n"
-        $readmeContent += "3. Python Script (Ready to use):`r`n"
-        $readmeContent += "   cd C:\BitcoinTools`r`n"
-        $readmeContent += "   python generate.py`r`n`r`n"
-        $readmeContent += "4. KeyHunt (Alternative):`r`n"
-        $readmeContent += "   https://github.com/kanhavishva/KeyHunt-Cuda`r`n`r`n"
-        $readmeContent += "==================================`r`n"
-        
-        $ip = Get-Content "ip.txt" -ErrorAction SilentlyContinue
-        $readmeContent += "RDP Connection Info:`r`n"
-        $readmeContent += "IP: $ip`r`n"
-        $readmeContent += "User: rdpuser`r`n"
-        $readmeContent += "Pass: Password123!`r`n"
+        $readmeContent += "   VanitySearch.exe -t 8 -o results.txt 1BTC`r`n"
         
         Set-Content -Path "$toolsDir\README.txt" -Value $readmeContent -Encoding UTF8
         
-        # Create Python script without heredoc
-        $pythonCode = "import hashlib`r`n"
-        $pythonCode += "import base58`r`n"
-        $pythonCode += "import secrets`r`n"
-        $pythonCode += "`r`n"
-        $pythonCode += "print('Bitcoin Address Generator')`r`n"
-        $pythonCode += "print('=' * 50)`r`n"
-        $pythonCode += "`r`n"
-        $pythonCode += "private_key = secrets.token_bytes(32)`r`n"
-        $pythonCode += "print(f'Private Key (hex): {private_key.hex()}')`r`n"
-        $pythonCode += "`r`n"
-        $pythonCode += "hash1 = hashlib.sha256(private_key).digest()`r`n"
-        $pythonCode += "ripemd160 = hashlib.new('ripemd160', hash1).digest()`r`n"
-        $pythonCode += "`r`n"
-        $pythonCode += "version = b'\\x00'`r`n"
-        $pythonCode += "payload = version + ripemd160`r`n"
-        $pythonCode += "`r`n"
-        $pythonCode += "checksum = hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]`r`n"
-        $pythonCode += "address = base58.b58encode(payload + checksum).decode()`r`n"
-        $pythonCode += "`r`n"
-        $pythonCode += "print(f'Bitcoin Address: {address}')`r`n"
+        # Create a simple test script
+        $testScript = "echo Bitcoin Vanity Address Tools`r`n"
+        $testScript += "echo ==========================`r`n"
+        $testScript += "echo.`r`n"
+        $testScript += "echo 1. Download VanitySearch.exe from GitHub`r`n"
+        $testScript += "echo 2. Run: VanitySearch.exe -t 8 -o results.txt 1BTC`r`n"
+        $testScript += "echo.`r`n"
+        $testScript += "pause`r`n"
         
-        Set-Content -Path "$toolsDir\generate.py" -Value $pythonCode -Encoding UTF8
+        Set-Content -Path "$toolsDir\start.bat" -Value $testScript -Encoding ASCII
         
-        # Create batch file without heredoc
-        $batchContent = "@echo off`r`n"
-        $batchContent += "echo Bitcoin Vanity Address Generator`r`n"
-        $batchContent += "echo ================================`r`n"
-        $batchContent += "echo.`r`n"
-        $batchContent += "echo Instructions:`r`n"
-        $batchContent += "echo 1. Download VanitySearch.exe from:`r`n"
-        $batchContent += "echo    https://github.com/JeanLucPons/VanitySearch/releases`r`n"
-        $batchContent += "echo 2. Save to C:\\BitcoinTools\\`r`n"
-        $batchContent += "echo 3. Run: VanitySearch.exe -t 8 -o results.txt 1BTC`r`n"
-        $batchContent += "echo.`r`n"
-        $batchContent += "pause`r`n"
-        
-        Set-Content -Path "$toolsDir\start.bat" -Value $batchContent -Encoding ASCII
-        
-        Write-Host "Bitcoin tools created at: $toolsDir"
+        Write-Host "✅ Bitcoin tools directory created at: $toolsDir"
         
     - name: Display Info
       shell: powershell
@@ -120,19 +147,26 @@ jobs:
         Write-Host "RDP WITH BITCOIN TOOLS READY"
         Write-Host "=" * 50
         
+        # Check for IP
         $ip = Get-Content "ip.txt" -ErrorAction SilentlyContinue
-        if (-not $ip) {
-            $ip = "Check workflow output above"
+        
+        if ($ip -eq "TAILSCALE_NOT_INSTALLED") {
+            Write-Host "⚠️ Tailscale installation issue"
+            Write-Host "RDP is enabled locally, but Tailscale may not work"
+            Write-Host "Check Tailscale installation manually"
+        } elseif ($ip) {
+            Write-Host "✅ IP Address: $ip"
+            Write-Host "✅ Connect using: mstsc /v:$ip"
+        } else {
+            Write-Host "IP address not available"
+            Write-Host "Check Tailscale connection manually"
         }
         
-        Write-Host "IP Address: $ip"
+        Write-Host ""
         Write-Host "Username: rdpuser"
         Write-Host "Password: Password123!"
         Write-Host ""
-        Write-Host "Tools location: C:\BitcoinTools"
-        Write-Host ""
-        Write-Host "Connect using: mstsc /v:$ip"
-        Write-Host "Session: 6 hours"
+        Write-Host "Bitcoin tools: C:\BitcoinTools"
         Write-Host "=" * 50
         
     - name: Keep Session Alive
@@ -141,5 +175,5 @@ jobs:
         Write-Host "RDP session active for 6 hours..."
         Write-Host "Bitcoin tools ready in C:\BitcoinTools"
         
-        # Keep alive for 6 hours
+        # Simple keep-alive
         Start-Sleep -Seconds 21600
