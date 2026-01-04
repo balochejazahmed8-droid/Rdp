@@ -1,126 +1,89 @@
 name: RDP with Tailscale
-
 on: workflow_dispatch
 
 jobs:
-  rdp:
+  setup-rdp:
     runs-on: windows-latest
     timeout-minutes: 360
     
     steps:
-    - name: Install Tailscale
-      shell: powershell
+    - name: Setup Tailscale and RDP
+      shell: cmd
       env:
         TS_AUTH_KEY: ${{ secrets.TS_AUTH_KEY }}
       run: |
-        # Download Tailscale
-        Write-Host "Downloading Tailscale..."
-        Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "tailscale.exe" -UseBasicParsing
+        @echo off
         
-        # Install silently
-        Write-Host "Installing Tailscale..."
-        Start-Process -FilePath ".\tailscale.exe" -ArgumentList "/S" -Wait
-        Start-Sleep -Seconds 10
+        echo ========================================
+        echo 1. Installing Tailscale...
+        echo ========================================
         
-        # Connect to Tailscale
-        Write-Host "Connecting to Tailscale network..."
-        & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$env:TS_AUTH_KEY" --hostname="github-rdp"
+        REM Download Tailscale
+        curl -L -o tailscale.exe https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe
+        if exist tailscale.exe (
+          echo Download successful
+        ) else (
+          echo Download failed
+          exit 1
+        )
         
-        # Get IP
-        $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-        Write-Host "Tailscale IP: $ip"
+        REM Install Tailscale silently
+        tailscale.exe /S
+        timeout /t 5
         
-        # Save IP to file
-        $ip | Out-File -FilePath "tailscale-ip.txt"
-    
-    - name: Enable RDP (FIXED Syntax)
-      shell: powershell
+        REM Connect to Tailscale
+        echo Connecting to Tailscale network...
+        "C:\Program Files\Tailscale\tailscale.exe" up --authkey=%TS_AUTH_KEY% --hostname=github-rdp
+        
+        REM Get Tailscale IP
+        for /f "tokens=*" %%i in ('"C:\Program Files\Tailscale\tailscale.exe" ip -4') do set TS_IP=%%i
+        echo Tailscale IP: %TS_IP%
+        
+        echo ========================================
+        echo 2. Setting up RDP...
+        echo ========================================
+        
+        REM Enable RDP
+        reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+        reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 1 /f
+        
+        REM Configure firewall
+        netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
+        
+        REM Start Terminal Services (ignore if already running)
+        net start TermService 2>nul || echo Service already running or error starting
+        
+        echo ========================================
+        echo 3. Creating user...
+        echo ========================================
+        
+        REM Create user with random password
+        set /a RAND=%RANDOM% + 10000
+        net user rdpuser GitHubRDP%RAND% /add /Y
+        net localgroup administrators rdpuser /add
+        net localgroup "Remote Desktop Users" rdpuser /add
+        
+        echo ========================================
+        echo 4. RDP READY TO CONNECT
+        echo ========================================
+        echo IP Address: %TS_IP%
+        echo Username: rdpuser
+        echo Password: GitHubRDP%RAND%
+        echo.
+        echo Connect using: mstsc /v:%TS_IP%
+        echo.
+        echo This session will run for 6 hours
+        echo ========================================
+        
+    - name: Keep RDP Session Alive
+      shell: cmd
       run: |
-        Write-Host "=== Setting up RDP ==="
+        @echo off
+        echo RDP session is now active...
+        echo Keeping alive for 6 hours...
+        echo.
         
-        # Enable RDP - suppress all errors
-        try {
-            reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f 2>$null
-            Write-Host "RDP enabled in registry"
-        } catch { }
+        REM Simple keep-alive - run for 6 hours (21600 seconds)
+        timeout /t 21600 /nobreak
         
-        # Enable NLA
-        try {
-            reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 1 /f 2>$null
-            Write-Host "NLA enabled"
-        } catch { }
-        
-        # Configure firewall - suppress output
-        try {
-            netsh advfirewall firewall set rule group="remote desktop" new enable=Yes 2>$null
-            Write-Host "Firewall configured"
-        } catch { }
-        
-        # Start service - ignore if already running
-        try {
-            net start TermService 2>$null
-            Write-Host "Terminal service started"
-        } catch {
-            Write-Host "Terminal service already running (this is OK)"
-        }
-        
-        Write-Host "RDP setup completed"
-    
-    - name: Create User
-      shell: powershell
-      run: |
-        Write-Host "Creating RDP user..."
-        
-        # Create user with random password
-        $password = "GitHub@" + (Get-Random -Minimum 10000 -Maximum 99999)
-        $username = "rdpuser"
-        
-        # Delete user if exists (to avoid errors)
-        net user $username /delete 2>$null
-        
-        # Create new user
-        net user $username $password /add /Y
-        net localgroup administrators $username /add
-        net localgroup "Remote Desktop Users" $username /add
-        
-        Write-Host "User created!"
-        Write-Host "Username: $username"
-        Write-Host "Password: $password"
-    
-    - name: Display Connection Info
-      shell: powershell
-      run: |
-        # Get Tailscale IP
-        $ip = Get-Content -Path "tailscale-ip.txt" -ErrorAction SilentlyContinue
-        if (-not $ip) {
-            $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-        }
-        
-        Write-Host "=========================================="
-        Write-Host "RDP READY TO CONNECT"
-        Write-Host "=========================================="
-        Write-Host "IP Address: $ip"
-        Write-Host "Username: rdpuser"
-        Write-Host "Password: Check previous step output"
-        Write-Host ""
-        Write-Host "Connect using: mstsc /v:$ip"
-        Write-Host ""
-        Write-Host "Session will run for 6 hours"
-        Write-Host "=========================================="
-    
-    - name: Keep Alive
-      shell: powershell
-      run: |
-        Write-Host "Keeping RDP session alive for 6 hours..."
-        
-        # Simple keep-alive
-        for ($i = 1; $i -le 360; $i++) {
-            # Show status every 5 minutes
-            if (($i % 5) -eq 0) {
-                $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4 2>$null
-                Write-Host "[$(Get-Date -Format 'HH:mm')] Active - IP: $ip"
-            }
-            Start-Sleep -Seconds 10
-        }
-        
-        Write-Host "6 hours completed. Goodbye!"
+        echo RDP session ended after 6 hours.
