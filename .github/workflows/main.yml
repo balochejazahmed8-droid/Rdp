@@ -14,28 +14,16 @@ jobs:
       run: |
         Write-Host "Step 1/4: Installing Tailscale..."
         
-        # Download Tailscale
         $tailscaleUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
         $installerPath = "$env:TEMP\tailscale.exe"
         
-        try {
-            Invoke-WebRequest -Uri $tailscaleUrl -OutFile $installerPath -UseBasicParsing
-            Write-Host "Tailscale downloaded"
-        } catch {
-            Write-Host "Trying alternate download method..."
-            (New-Object System.Net.WebClient).DownloadFile($tailscaleUrl, $installerPath)
-        }
-        
-        # Install Tailscale
+        Invoke-WebRequest -Uri $tailscaleUrl -OutFile $installerPath -UseBasicParsing
         Start-Process -FilePath $installerPath -ArgumentList "/S" -Wait -NoNewWindow
         Start-Sleep -Seconds 5
         
-        # Connect to Tailscale
-        & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$env:TS_AUTH_KEY" --hostname="github-rdp-$env:GITHUB_RUN_ID"
-        
-        # Get IP
+        & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$env:TS_AUTH_KEY" --hostname="github-rdp"
         $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-        Write-Host "Tailscale connected. IP: $ip"
+        Write-Host "IP: $ip"
         $ip | Out-File -FilePath "$env:GITHUB_WORKSPACE\ip.txt"
         
     - name: Enable RDP
@@ -43,24 +31,15 @@ jobs:
       run: |
         Write-Host "Step 2/4: Enabling Remote Desktop..."
         
-        # Enable RDP in registry
         Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
-        
-        # Configure firewall
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
         
-        # Create user
         $password = ConvertTo-SecureString "Password123!" -AsPlainText -Force
         $username = "rdpuser"
         
-        try {
-            New-LocalUser -Name $username -Password $password -ErrorAction Stop
-            Add-LocalGroupMember -Group "Administrators" -Member $username
-            Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-            Write-Host "User created: $username"
-        } catch {
-            Write-Host "User already exists or error creating"
-        }
+        New-LocalUser -Name $username -Password $password -ErrorAction SilentlyContinue
+        Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
+        Write-Host "User created"
         
     - name: Setup Bitcoin Tools
       shell: powershell
@@ -71,7 +50,7 @@ jobs:
         $toolsDir = "C:\BitcoinTools"
         New-Item -ItemType Directory -Path $toolsDir -Force
         
-        # Create README file without using @" "@ syntax
+        # Create README file - FIXED SYNTAX
         $readmeContent = @'
 BITCOIN VANITY ADDRESS TOOLS SETUP
 ==================================
@@ -106,37 +85,20 @@ Pass: Password123!
         
         Set-Content -Path "$toolsDir\README.txt" -Value $readmeContent -Encoding UTF8
         
-        # Create Python generator script
+        # Create Python script
         $pythonScript = @'
 import hashlib
 import base58
 import secrets
-import sys
-
 print("Bitcoin Address Generator")
-print("=" * 50)
-
-# Generate random private key
 private_key = secrets.token_bytes(32)
-print(f"Private Key (hex): {private_key.hex()}")
-
-# Simple hash simulation (not actual ECDSA for brevity)
 hash1 = hashlib.sha256(private_key).digest()
 ripemd160 = hashlib.new('ripemd160', hash1).digest()
-
-# Mainnet address (0x00)
 version = b'\x00'
 payload = version + ripemd160
-
-# Double SHA256 checksum
 checksum = hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]
-
-# Base58 encode
 address = base58.b58encode(payload + checksum).decode()
-
-print(f"Bitcoin Address: {address}")
-print("Note: This is a simplified demo.")
-print("For real vanity search, use VanitySearch.exe")
+print(f"Address: {address}")
 '@
         
         Set-Content -Path "$toolsDir\generate.py" -Value $pythonScript -Encoding UTF8
@@ -145,28 +107,19 @@ print("For real vanity search, use VanitySearch.exe")
         $batchContent = @'
 @echo off
 echo Bitcoin Vanity Address Generator
-echo ================================
-echo.
-echo Instructions:
-echo 1. Download VanitySearch.exe from:
-echo    https://github.com/JeanLucPons/VanitySearch/releases
-echo 2. Save it to this folder (C:\BitcoinTools)
-echo 3. Run this command:
-echo    VanitySearch.exe -t 8 -o results.txt 1YourPattern
-echo.
-echo Example patterns: 1BTC, 1HODL, 1Love, 1MyWallet
-echo.
+cd /d C:\BitcoinTools
+echo Run: VanitySearch.exe -t 8 -o results.txt 1BTC
 pause
 '@
         
         Set-Content -Path "$toolsDir\start.bat" -Value $batchContent -Encoding ASCII
         
-        Write-Host "Bitcoin tools directory created at: $toolsDir"
+        Write-Host "Tools directory created at: $toolsDir"
         
     - name: Display Connection Info
       shell: powershell
       run: |
-        Write-Host "Step 4/4: Final setup complete!"
+        Write-Host "Step 4/4: Setup complete!"
         Write-Host "=" * 50
         Write-Host "RDP WITH BITCOIN TOOLS READY"
         Write-Host "=" * 50
@@ -176,39 +129,12 @@ pause
             $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4 2>$null
         }
         
-        Write-Host "Connection Details:"
-        Write-Host "IP Address: $ip"
-        Write-Host "Username: rdpuser"
-        Write-Host "Password: Password123!"
-        Write-Host ""
-        Write-Host "Bitcoin Tools Location:"
-        Write-Host "C:\BitcoinTools\"
-        Write-Host ""
-        Write-Host "Quick Start After Connecting:"
-        Write-Host "1. Open Command Prompt"
-        Write-Host "2. Type: cd C:\BitcoinTools"
-        Write-Host "3. Download VanitySearch from GitHub"
-        Write-Host "4. Run: VanitySearch.exe -t 8 -o results.txt 1BTC"
-        Write-Host ""
-        Write-Host "Session Duration: 6 hours"
+        Write-Host "IP: $ip"
+        Write-Host "User: rdpuser"
+        Write-Host "Pass: Password123!"
+        Write-Host "Tools: C:\BitcoinTools"
         Write-Host "=" * 50
         
     - name: Keep Session Alive
       shell: powershell
-      run: |
-        Write-Host "RDP session is now active and running..."
-        Write-Host "Bitcoin tools are ready in C:\BitcoinTools"
-        Write-Host ""
-        
-        # Display countdown
-        $totalSeconds = 21600
-        for ($i = 1; $i -le $totalSeconds; $i++) {
-            if ($i % 300 -eq 0) {
-                $minutes = [math]::Round($i / 60)
-                $hours = [math]::Round($minutes / 60, 1)
-                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Running for $minutes minutes ($hours hours)"
-            }
-            Start-Sleep -Seconds 1
-        }
-        
-        Write-Host "6 hours completed. Session ending."
+      run: Start-Sleep -Seconds 21600
