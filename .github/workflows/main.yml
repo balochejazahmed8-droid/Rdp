@@ -7,7 +7,6 @@ jobs:
     timeout-minutes: 360
     
     steps:
-    # STEP 1: Setup Tailscale
     - name: Setup Tailscale
       shell: powershell
       env:
@@ -21,7 +20,7 @@ jobs:
         
         try {
             Invoke-WebRequest -Uri $tailscaleUrl -OutFile $installerPath -UseBasicParsing
-            Write-Host "✓ Tailscale downloaded"
+            Write-Host "Tailscale downloaded"
         } catch {
             Write-Host "Trying alternate download method..."
             (New-Object System.Net.WebClient).DownloadFile($tailscaleUrl, $installerPath)
@@ -36,10 +35,9 @@ jobs:
         
         # Get IP
         $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-        Write-Host "✓ Tailscale connected. IP: $ip"
+        Write-Host "Tailscale connected. IP: $ip"
         $ip | Out-File -FilePath "$env:GITHUB_WORKSPACE\ip.txt"
         
-    # STEP 2: Enable RDP
     - name: Enable RDP
       shell: powershell
       run: |
@@ -59,12 +57,11 @@ jobs:
             New-LocalUser -Name $username -Password $password -ErrorAction Stop
             Add-LocalGroupMember -Group "Administrators" -Member $username
             Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-            Write-Host "✓ User created: $username"
+            Write-Host "User created: $username"
         } catch {
             Write-Host "User already exists or error creating"
         }
         
-    # STEP 3: Setup Bitcoin Tools
     - name: Setup Bitcoin Tools
       shell: powershell
       run: |
@@ -74,8 +71,8 @@ jobs:
         $toolsDir = "C:\BitcoinTools"
         New-Item -ItemType Directory -Path $toolsDir -Force
         
-        # Create README file
-        @"
+        # Create README file without using @" "@ syntax
+        $readmeContent = @'
 BITCOIN VANITY ADDRESS TOOLS SETUP
 ==================================
 
@@ -96,64 +93,56 @@ BITCOIN VANITY ADDRESS TOOLS SETUP
 
 ==================================
 RDP Connection Info:
-IP: $(Get-Content "$env:GITHUB_WORKSPACE\ip.txt" -ErrorAction SilentlyContinue)
+IP: 
 User: rdpuser
 Pass: Password123!
-"@ | Out-File -FilePath "$toolsDir\README.txt" -Encoding UTF8
+'@
+        
+        # Add IP to README
+        $ip = Get-Content "$env:GITHUB_WORKSPACE\ip.txt" -ErrorAction SilentlyContinue
+        if ($ip) {
+            $readmeContent = $readmeContent -replace 'IP: ', "IP: $ip"
+        }
+        
+        Set-Content -Path "$toolsDir\README.txt" -Value $readmeContent -Encoding UTF8
         
         # Create Python generator script
-        @"
+        $pythonScript = @'
 import hashlib
 import base58
 import secrets
 import sys
 
-def generate_address(prefix=""):
-    count = 0
-    print(f"Looking for address starting with: {prefix}")
-    print("Press Ctrl+C to stop")
-    
-    try:
-        while True:
-            # Generate random private key
-            private_key = secrets.token_bytes(32)
-            
-            # ECDSA (simplified - real implementation needs ecdsa library)
-            # For demo, we'll just generate random addresses
-            hash1 = hashlib.sha256(private_key).digest()
-            ripemd160 = hashlib.new('ripemd160', hash1).digest()
-            
-            # Mainnet address (0x00)
-            version = b'\x00'
-            payload = version + ripemd160
-            
-            # Double SHA256 checksum
-            checksum = hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]
-            
-            # Base58 encode
-            address = base58.b58encode(payload + checksum).decode()
-            
-            count += 1
-            
-            if prefix and address.startswith(prefix):
-                print(f"\n✓ Found after {count:,} attempts!")
-                print(f"Address: {address}")
-                return address
-                
-            if count % 10000 == 0:
-                print(f"Checked {count:,} addresses...")
-                
-    except KeyboardInterrupt:
-        print(f"\nStopped after {count:,} attempts")
-        return None
+print("Bitcoin Address Generator")
+print("=" * 50)
 
-if __name__ == "__main__":
-    prefix = sys.argv[1] if len(sys.argv) > 1 else ""
-    generate_address(prefix)
-"@ | Out-File -FilePath "$toolsDir\generate.py" -Encoding UTF8
+# Generate random private key
+private_key = secrets.token_bytes(32)
+print(f"Private Key (hex): {private_key.hex()}")
+
+# Simple hash simulation (not actual ECDSA for brevity)
+hash1 = hashlib.sha256(private_key).digest()
+ripemd160 = hashlib.new('ripemd160', hash1).digest()
+
+# Mainnet address (0x00)
+version = b'\x00'
+payload = version + ripemd160
+
+# Double SHA256 checksum
+checksum = hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]
+
+# Base58 encode
+address = base58.b58encode(payload + checksum).decode()
+
+print(f"Bitcoin Address: {address}")
+print("Note: This is a simplified demo.")
+print("For real vanity search, use VanitySearch.exe")
+'@
         
-        # Create batch file to run VanitySearch
-        @"
+        Set-Content -Path "$toolsDir\generate.py" -Value $pythonScript -Encoding UTF8
+        
+        # Create batch file
+        $batchContent = @'
 @echo off
 echo Bitcoin Vanity Address Generator
 echo ================================
@@ -168,17 +157,18 @@ echo.
 echo Example patterns: 1BTC, 1HODL, 1Love, 1MyWallet
 echo.
 pause
-"@ | Out-File -FilePath "$toolsDir\start.bat" -Encoding ASCII
+'@
         
-        Write-Host "✓ Bitcoin tools directory created at: $toolsDir"
+        Set-Content -Path "$toolsDir\start.bat" -Value $batchContent -Encoding ASCII
         
-    # STEP 4: Display Info
+        Write-Host "Bitcoin tools directory created at: $toolsDir"
+        
     - name: Display Connection Info
       shell: powershell
       run: |
         Write-Host "Step 4/4: Final setup complete!"
         Write-Host "=" * 50
-        Write-Host "✅ RDP WITH BITCOIN TOOLS READY"
+        Write-Host "RDP WITH BITCOIN TOOLS READY"
         Write-Host "=" * 50
         
         $ip = Get-Content "$env:GITHUB_WORKSPACE\ip.txt" -ErrorAction SilentlyContinue
@@ -186,35 +176,34 @@ pause
             $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4 2>$null
         }
         
-        Write-Host "🌐 Connection Details:"
+        Write-Host "Connection Details:"
         Write-Host "IP Address: $ip"
         Write-Host "Username: rdpuser"
         Write-Host "Password: Password123!"
         Write-Host ""
-        Write-Host "💰 Bitcoin Tools Location:"
+        Write-Host "Bitcoin Tools Location:"
         Write-Host "C:\BitcoinTools\"
         Write-Host ""
-        Write-Host "🚀 Quick Start After Connecting:"
+        Write-Host "Quick Start After Connecting:"
         Write-Host "1. Open Command Prompt"
         Write-Host "2. Type: cd C:\BitcoinTools"
         Write-Host "3. Download VanitySearch from GitHub"
         Write-Host "4. Run: VanitySearch.exe -t 8 -o results.txt 1BTC"
         Write-Host ""
-        Write-Host "⏰ Session Duration: 6 hours"
+        Write-Host "Session Duration: 6 hours"
         Write-Host "=" * 50
         
-    # STEP 5: Keep Alive
     - name: Keep Session Alive
       shell: powershell
       run: |
-        Write-Host "🔄 RDP session is now active and running..."
+        Write-Host "RDP session is now active and running..."
         Write-Host "Bitcoin tools are ready in C:\BitcoinTools"
         Write-Host ""
         
         # Display countdown
-        $totalSeconds = 21600  # 6 hours
+        $totalSeconds = 21600
         for ($i = 1; $i -le $totalSeconds; $i++) {
-            if ($i % 300 -eq 0) {  # Every 5 minutes
+            if ($i % 300 -eq 0) {
                 $minutes = [math]::Round($i / 60)
                 $hours = [math]::Round($minutes / 60, 1)
                 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Running for $minutes minutes ($hours hours)"
@@ -222,4 +211,4 @@ pause
             Start-Sleep -Seconds 1
         }
         
-        Write-Host "⏰ 6 hours completed. Session ending."
+        Write-Host "6 hours completed. Session ending."
