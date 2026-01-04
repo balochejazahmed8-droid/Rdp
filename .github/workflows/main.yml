@@ -33,7 +33,7 @@ jobs:
         # Save IP to file
         $ip | Out-File -FilePath "tailscale-ip.txt"
     
-    - name: Enable RDP (FIXED - No Error)
+    - name: Enable RDP (FIXED Syntax)
       shell: powershell
       run: |
         Write-Host "=== Setting up RDP ==="
@@ -41,30 +41,30 @@ jobs:
         # Enable RDP - suppress all errors
         try {
             reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f 2>$null
-            Write-Host "✓ RDP enabled in registry"
-        } catch {}
+            Write-Host "RDP enabled in registry"
+        } catch { }
         
         # Enable NLA
         try {
             reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 1 /f 2>$null
-            Write-Host "✓ NLA enabled"
-        } catch {}
+            Write-Host "NLA enabled"
+        } catch { }
         
         # Configure firewall - suppress output
         try {
             netsh advfirewall firewall set rule group="remote desktop" new enable=Yes 2>$null
-            Write-Host "✓ Firewall configured"
-        } catch {}
+            Write-Host "Firewall configured"
+        } catch { }
         
         # Start service - ignore if already running
         try {
             net start TermService 2>$null
-            Write-Host "✓ Terminal service started"
+            Write-Host "Terminal service started"
         } catch {
-            Write-Host "ℹ Terminal service already running (this is OK)"
+            Write-Host "Terminal service already running (this is OK)"
         }
         
-        Write-Host "✅ RDP setup completed"
+        Write-Host "RDP setup completed"
     
     - name: Create User
       shell: powershell
@@ -97,23 +97,23 @@ jobs:
         }
         
         Write-Host "=========================================="
-        Write-Host "🎯 RDP READY TO CONNECT"
+        Write-Host "RDP READY TO CONNECT"
         Write-Host "=========================================="
         Write-Host "IP Address: $ip"
         Write-Host "Username: rdpuser"
         Write-Host "Password: Check previous step output"
         Write-Host ""
-        Write-Host "💻 Connect using: mstsc /v:$ip"
+        Write-Host "Connect using: mstsc /v:$ip"
         Write-Host ""
-        Write-Host "⏰ Session will run for 6 hours"
+        Write-Host "Session will run for 6 hours"
         Write-Host "=========================================="
     
     - name: Keep Alive
       shell: powershell
       run: |
-        Write-Host "🔄 Keeping RDP session alive for 6 hours..."
+        Write-Host "Keeping RDP session alive for 6 hours..."
         
-        # Simple keep-alive - NO ERRORS
+        # Simple keep-alive
         for ($i = 1; $i -le 360; $i++) {
             # Show status every 5 minutes
             if (($i % 5) -eq 0) {
@@ -123,4 +123,4 @@ jobs:
             Start-Sleep -Seconds 10
         }
         
-        Write-Host "⏰ 6 hours completed. Goodbye!"
+        Write-Host "6 hours completed. Goodbye!"
