@@ -29,12 +29,15 @@ jobs:
       - name: Enable RDP and Create User
         shell: powershell
         run: |
+      - name: Enable RDP and Create User
+        shell: powershell
+        run: |
           # Enable RDP
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0 -Force
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
           New-NetFirewallRule -DisplayName "RDP Custom" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -ErrorAction SilentlyContinue
-
+          
           # Create user
           $username = "rdpuser"
           $passPlain = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 16 | ForEach-Object {[char]$_})
@@ -44,16 +47,44 @@ jobs:
             net user $username /delete 2>&1 | Out-Null
           } catch {}
           
-          # Create new user
+          # Create new user - FIXED: Added -Password parameter and removed *** from username
           $securePassword = ConvertTo-SecureString $passPlain -AsPlainText -Force
           New-LocalUser -Name $username -Password $securePassword -FullName "RDP User" -Description "Temporary RDP User" -PasswordNeverExpires
           
           # Add to groups
           Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
-
-          # Store password in environment variable - FIXED THIS LINE!
-          echo "PASSWORD=$passPlain" >> $env:GITHUB_ENV
+          
+          # Store password in environment variable - FIXED: Set correct variable
+          Write-Output "PASSWORD=$passPlain" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "User created: $username"      - name: Enable RDP and Create User
+        shell: powershell
+        run: |
+          # Enable RDP
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0 -Force
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+          New-NetFirewallRule -DisplayName "RDP Custom" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -ErrorAction SilentlyContinue
+          
+          # Create user
+          $username = "rdpuser"
+          $passPlain = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 16 | ForEach-Object {[char]$_})
+          
+          # Delete user if exists
+          try {
+            net user $username /delete 2>&1 | Out-Null
+          } catch {}
+          
+          # Create new user - FIXED: Added -Password parameter and removed *** from username
+          $securePassword = ConvertTo-SecureString $passPlain -AsPlainText -Force
+          New-LocalUser -Name $username -Password $securePassword -FullName "RDP User" -Description "Temporary RDP User" -PasswordNeverExpires
+          
+          # Add to groups
+          Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
+          
+          # Store password in environment variable - FIXED: Set correct variable
+          Write-Output "PASSWORD=$passPlain" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "User created: $username"
 
       - name: Setup Bitcoin Vanity Tools
