@@ -39,13 +39,13 @@ jobs:
           $username = "rdpuser"
           $passPlain = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 16 | ForEach-Object {[char]$_})
           
-          # Delete if exists and create new
+          # Delete if exists and create new (ignore delete errors)
           net user $username /delete 2>$null
           net user $username $passPlain /add /y
           net localgroup Administrators $username /add
           net localgroup "Remote Desktop Users" $username /add
           
-          # Set environment variable
+          # Set environment variable - THIS IS THE FIXED LINE!
           "PASSWORD=$passPlain" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "User created: $username"
 
