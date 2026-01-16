@@ -105,39 +105,60 @@ jobs:
         
         Write-Host "✅ RDP user created: $username"
         
-    - name: Setup Bitcoin Tools
-      shell: powershell
-      run: |
-        Write-Host "Step 3: Setting up Bitcoin tools..."
-        
-        # Create Bitcoin tools directory
-        $toolsDir = "C:\BitcoinTools"
-        New-Item -ItemType Directory -Path $toolsDir -Force
-        
-        # Create simple README
-        $readmeContent = "BITCOIN VANITY ADDRESS TOOLS SETUP`r`n"
-        $readmeContent += "==================================`r`n`r`n"
-        $readmeContent += "1. Download VanitySearch from:`r`n"
-        $readmeContent += "   https://github.com/JeanLucPons/VanitySearch/releases`r`n`r`n"
-        $readmeContent += "2. Save to: C:\\BitcoinTools\\`r`n`r`n"
-        $readmeContent += "3. Run in Command Prompt:`r`n"
-        $readmeContent += "   cd C:\BitcoinTools`r`n"
-        $readmeContent += "   VanitySearch.exe -t 8 -o results.txt 1BTC`r`n"
-        
-        Set-Content -Path "$toolsDir\README.txt" -Value $readmeContent -Encoding UTF8
-        
-        # Create a simple test script
-        $testScript = "echo Bitcoin Vanity Address Tools`r`n"
-        $testScript += "echo ==========================`r`n"
-        $testScript += "echo.`r`n"
-        $testScript += "echo 1. Download VanitySearch.exe from GitHub`r`n"
-        $testScript += "echo 2. Run: VanitySearch.exe -t 8 -o results.txt 1BTC`r`n"
-        $testScript += "echo.`r`n"
-        $testScript += "pause`r`n"
-        
-        Set-Content -Path "$toolsDir\start.bat" -Value $testScript -Encoding ASCII
-        
-        Write-Host "✅ Bitcoin tools directory created at: $toolsDir"
+          - name: Setup Bitcoin Vanity Tools
+        shell: powershell
+        run: |
+          $toolsDir = "C:\BitcoinVanity"
+          New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+
+          Write-Host "Downloading VanitySearch v1.19 (with retry)..."
+          $vsUrl = "https://github.com/JeanLucPons/VanitySearch/releases/download/1.19/VanitySearch.exe"
+          $vsPath = "$toolsDir\VanitySearch.exe"
+
+          $success = $false
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Invoke-WebRequest -Uri $vsUrl -OutFile $vsPath -UseBasicParsing -TimeoutSec 120
+              Write-Host "VanitySearch downloaded successfully on attempt $i"
+              $success = $true
+              break
+            } catch {
+              Write-Host "Attempt $i failed: $_"
+              Start-Sleep -Seconds 5
+            }
+          }
+
+          if (-not $success) {
+            Write-Host "All download attempts failed - check network or URL"
+          }
+
+          $readme = @'
+Bitcoin Vanity Address Generator (v1.19)
+
+File: VanitySearch.exe is ready in this folder.
+
+Quick examples:
+  VanitySearch.exe 1Ejaz         # Search for addresses starting with 1Ejaz
+  VanitySearch.exe -t 0 1Love    # Use all CPU threads
+  VanitySearch.exe -gpu 1My      # Try GPU mode (not available on GitHub)
+
+More options:
+  VanitySearch.exe --help
+'@
+          Set-Content -Path "$toolsDir\README.txt" -Value $readme -Encoding UTF8
+
+          $bat = @'
+@echo off
+title Bitcoin Vanity Tools
+echo VanitySearch is ready!
+echo.
+echo Check README.txt for examples
+echo.
+pause
+'@
+          Set-Content -Path "$toolsDir\start.bat" -Value $bat -Encoding ASCII
+
+          Write-Host "Tools folder created: $toolsDir"r"
         
     - name: Display Info
       shell: powershell
