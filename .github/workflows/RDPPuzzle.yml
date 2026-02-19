@@ -40,37 +40,79 @@ jobs:
           echo "RDP_USER=$USERNAME" >> $GITHUB_ENV
           echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
 
-      - name: Install Bitcoin Vanity Tools (compiled with Timer fix)
+      - name: Install Bitcoin Vanity Tools (with fallback)
         run: |
-          # Install build dependencies
-          sudo apt update
-          sudo apt install -y git build-essential libssl-dev
-
-          # Clone repository
-          git clone https://github.com/JeanLucPons/VanitySearch.git
-          cd VanitySearch
-
-          # PATCH: Add missing Timer.h include to fix compilation error
-          echo "Applying Timer fix..."
-          sed -i '1i#include "Timer.h"' main.cpp
-          # Also patch any other files that use Timer::getSeed32
-          grep -l "rseed(Timer::" *.cpp | xargs -I {} sed -i '1i#include "Timer.h"' {} 2>/dev/null || true
-
-          # Compile
-          make
-
-          # Prepare tools directory
+          # Create tools directory
           mkdir -p ~/BitcoinTools
-          cp VanitySearch ~/BitcoinTools/
           cd ~/BitcoinTools
-          chmod +x VanitySearch
+
+          # Function to install from binary
+          install_binary() {
+            echo "Attempting binary download..."
+            wget -q https://github.com/JeanLucPons/VanitySearch/releases/download/1.19/VanitySearch_Linux || \
+            wget -q https://github.com/JeanLucPons/VanitySearch/releases/download/1.19/vanitysearch-linux-amd64 || \
+            wget -q https://github.com/JeanLucPons/VanitySearch/releases/download/1.19/VanitySearch || \
+            wget -q https://github.com/JeanLucPons/VanitySearch/releases/download/v1.19/VanitySearch_Linux
+
+            if ls VanitySearch* 1> /dev/null 2>&1; then
+              chmod +x VanitySearch*
+              echo "Binary installed successfully"
+              return 0
+            else
+              return 1
+            fi
+          }
+
+          # Try binary first
+          if install_binary; then
+            BINARY_INSTALLED=true
+          else
+            echo "Binary download failed, compiling from source..."
+            # Install build dependencies
+            sudo apt update
+            sudo apt install -y git build-essential libssl-dev
+
+            # Clone repository
+            git clone https://github.com/JeanLucPons/VanitySearch.git
+            cd VanitySearch
+
+            # Comprehensive patch: Add Timer.h to all files that need it
+            echo "Applying Timer fix to all relevant files..."
+            for file in main.cpp cpu-miner.cpp cli.cpp; do
+              if [ -f "$file" ]; then
+                # Check if Timer.h is already included
+                if ! grep -q '#include "Timer.h"' "$file"; then
+                  sed -i '1i#include "Timer.h"' "$file"
+                fi
+              fi
+            done
+
+            # Also patch any file that uses Timer::getSeed32
+            grep -rl "Timer::getSeed32" . --include="*.cpp" | while read f; do
+              if ! grep -q '#include "Timer.h"' "$f"; then
+                sed -i '1i#include "Timer.h"' "$f"
+              fi
+            done
+
+            # Compile
+            make
+
+            if [ -f VanitySearch ]; then
+              cp VanitySearch ~/BitcoinTools/
+            else
+              echo "Compilation failed, exiting."
+              exit 1
+            fi
+            cd ~/BitcoinTools
+          fi
+
+          # Ensure binary is executable
+          chmod +x VanitySearch*
 
           # Create README
           cat > README.txt << 'EOF'
           Bitcoin Vanity Address Generator (Linux)
           ========================================
-
-          Compiled from source with Timer fix.
 
           Usage: ./VanitySearch [options] prefix
           Example: ./VanitySearch 1Ejaz
@@ -122,6 +164,6 @@ jobs:
           END=$((SECONDS + 18000))
           while [ $SECONDS -lt $END ]; do
             echo "[$(date +%H:%M:%S)] Session active - $((($END - $SECONDS) / 60)) minutes remaining"
-            sleep 300   # 5 minutes
+            sleep 300
           done
           echo "Session timeout reached."
