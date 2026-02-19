@@ -4,7 +4,7 @@ on: workflow_dispatch
 
 jobs:
   setup:
-    runs-on: ubuntu-latest                # Use Ubuntu runner
+    runs-on: ubuntu-latest
     timeout-minutes: 300
 
     steps:
@@ -29,7 +29,7 @@ jobs:
           echo xfce4-session > ~/.xsession
           sudo systemctl enable xrdp
           sudo systemctl restart xrdp
-          # Allow RDP port in firewall (ufw not active by default on GitHub runners)
+          # Allow RDP port in firewall
           sudo ufw allow 3389/tcp || true
 
       - name: Create RDP User
@@ -39,32 +39,46 @@ jobs:
           # Create user with home directory
           sudo useradd -m -s /bin/bash $USERNAME
           echo "$USERNAME:$PASSWORD" | sudo chpasswd
-          # Add user to groups for RDP
-          sudo usermod -aG sudo $USERNAME   # sudo group for admin rights
-          sudo usermod -aG xrdp $USERNAME   # xrdp group (if exists)
-          # Store credentials in environment
+          # Add to groups
+          sudo usermod -aG sudo $USERNAME
+          sudo usermod -aG xrdp $USERNAME
+          # Store credentials
           echo "RDP_USER=$USERNAME" >> $GITHUB_ENV
           echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
-          echo "User created: $USERNAME"
 
-      - name: Install Bitcoin Vanity Tools (VanitySearch)
+      - name: Install Bitcoin Vanity Tools (compile from source)
         run: |
+          # Install build dependencies
+          sudo apt update
+          sudo apt install -y git build-essential libssl-dev
+
+          # Clone and compile VanitySearch
+          git clone https://github.com/JeanLucPons/VanitySearch.git
+          cd VanitySearch
+          make
+
+          # Create tools directory and copy binary
           mkdir -p ~/BitcoinTools
+          cp VanitySearch ~/BitcoinTools/
           cd ~/BitcoinTools
-          # Download pre-compiled Linux binary from VanitySearch releases
-          wget https://github.com/JeanLucPons/VanitySearch/releases/download/1.19/VanitySearch
           chmod +x VanitySearch
+
           # Create README
-          cat > README.txt << EOF
-          Bitcoin Vanity Address Generator (Linux version)
-          
+          cat > README.txt << 'EOF'
+          Bitcoin Vanity Address Generator (Linux)
+          ========================================
+
+          Compiled from source.
+
           Usage: ./VanitySearch [options] prefix
           Example: ./VanitySearch 1Ejaz
-          More options: ./VanitySearch --help
+
+          For full options: ./VanitySearch --help
           EOF
-          # Create desktop shortcut (optional, but we'll add a launcher to ~/Desktop)
-          mkdir -p ~/Desktop
-          cat > ~/Desktop/VanitySearch.desktop << EOF
+
+          # Create desktop shortcut for the user
+          sudo mkdir -p /home/linuxuser/Desktop
+          sudo bash -c "cat > /home/linuxuser/Desktop/VanitySearch.desktop << 'EOF'
           [Desktop Entry]
           Name=VanitySearch
           Comment=Bitcoin Vanity Address Generator
@@ -73,8 +87,10 @@ jobs:
           Terminal=true
           Type=Application
           Categories=Application;
-          EOF
-          chmod +x ~/Desktop/VanitySearch.desktop
+          EOF"
+          sudo chmod +x /home/linuxuser/Desktop/VanitySearch.desktop
+          sudo chown -R linuxuser:linuxuser /home/linuxuser/Desktop /home/linuxuser/BitcoinTools
+
           echo "Bitcoin tools installed in /home/linuxuser/BitcoinTools"
 
       - name: Display Connection Information
@@ -91,9 +107,8 @@ jobs:
           echo ""
           echo "CONNECT USING:"
           echo "On Windows: mstsc /v:${{ env.RDP_IP }}"
-          echo "On Linux: use any RDP client (Remmina, KRDC)"
           echo ""
-          echo "DESKTOP ENVIRONMENT: XFCE (lightweight)"
+          echo "DESKTOP ENVIRONMENT: XFCE"
           echo "BITCOIN TOOLS: ~/BitcoinTools (VanitySearch)"
           echo ""
           echo "SESSION DURATION: up to 5 hours (keep-alive active)"
@@ -102,11 +117,9 @@ jobs:
       - name: Keep Session Alive
         run: |
           echo "Keeping session active for 5 hours..."
-          # Simple loop that prints every 5 minutes
-          END=$((SECONDS + 18000))  # 5 hours = 18000 seconds
+          END=$((SECONDS + 18000))
           while [ $SECONDS -lt $END ]; do
-            echo "[$(date +%H:%M:%S)] Session active - $(($END - $SECONDS)) seconds remaining"
-            # Optional: simulate activity (e.g., touch a file, but not necessary)
+            echo "[$(date +%H:%M:%S)] Session active - $((($END - $SECONDS) / 60)) minutes remaining"
             sleep 300   # 5 minutes
           done
           echo "Session timeout reached."
