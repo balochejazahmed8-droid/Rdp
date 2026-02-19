@@ -35,17 +35,16 @@ jobs:
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
           New-NetFirewallRule -DisplayName "RDP Custom" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -ErrorAction SilentlyContinue
           
-          # Create user using net command (simpler)
+          # Create user
           $username = "rdpuser"
           $passPlain = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 16 | ForEach-Object {[char]$_})
           
-          # Delete if exists and create new (ignore delete errors)
           net user $username /delete 2>$null
           net user $username $passPlain /add /y
           net localgroup Administrators $username /add
           net localgroup "Remote Desktop Users" $username /add
           
-          # Set environment variable - THIS IS THE FIXED LINE!
+          # Save password to environment
           "PASSWORD=$passPlain" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "User created: $username"
 
@@ -71,13 +70,15 @@ jobs:
                 $retryCount++
                 Write-Host "Download attempt $retryCount failed: $_"
                 if ($retryCount -eq $maxRetries) {
-                  throw
+                  Write-Host "ERROR: Failed to download VanitySearch after $maxRetries attempts."
+                  exit 1   # Fail the job so user knows tool is missing
                 }
                 Start-Sleep -Seconds 5
               }
             }
           } catch {
-            Write-Host "Warning: Failed to download VanitySearch, continuing anyway"
+            Write-Host "Fatal error during download: $_"
+            exit 1
           }
 
           # Create README
@@ -144,50 +145,20 @@ jobs:
           Write-Host ""
           Write-Host "Tools location: C:\BitcoinVanity"
           Write-Host ""
-          Write-Host "Note: Session will stay active for 5 hours"
+          Write-Host "Note: Session will stay active for 5 hours (job timeout)"
           Write-Host "======================================"
 
-      - name: Keep Session Alive
+      - name: Keep Session Alive (Idle Wait)
         shell: powershell
         run: |
-          Write-Host "Starting keep-alive session..."
-          
-          function Move-Mouse {
-            try {
-              Add-Type -AssemblyName System.Windows.Forms
-              $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-              $x = Get-Random -Minimum 100 -Maximum ($screen.Width - 100)
-              $y = Get-Random -Minimum 100 -Maximum ($screen.Height - 100)
-              [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($x, $y)
-              return $true
-            } catch {
-              return $false
-            }
-          }
-          
+          Write-Host "Job will remain active for 5 hours. You can RDP into the machine."
+          Write-Host "The runner will shut down automatically after 5 hours."
           $endTime = (Get-Date).AddHours(5)
-          Write-Host "Session will run until: $endTime"
-          
+          Write-Host "Current time: $(Get-Date)"
+          Write-Host "End time: $endTime"
           while ((Get-Date) -lt $endTime) {
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Keeping session alive..."
-            
-            $mouseSuccess = Move-Mouse
-            
-            if (-not $mouseSuccess) {
-              Write-Host "Mouse movement failed, using alternative method"
-              
-              try {
-                Add-Type -AssemblyName System.Windows.Forms
-                [System.Windows.Forms.SendKeys]::SendWait("{NUMLOCK}{NUMLOCK}")
-              } catch {
-                Write-Host "Key press failed, continuing anyway"
-              }
-            }
-            
-            $timeRemaining = ($endTime - (Get-Date)).TotalMinutes
-            Write-Host "Time remaining: $([math]::Round($timeRemaining)) minutes"
-            
-            Start-Sleep -Seconds 300
+            $remaining = ($endTime - (Get-Date)).TotalMinutes
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Time remaining: $([math]::Round($remaining)) minutes"
+            Start-Sleep -Seconds 60
           }
-          
-          Write-Host "Session timeout reached. Shutting down..."vv
+          Write-Host "Session timeout reached. Shutting down..."
