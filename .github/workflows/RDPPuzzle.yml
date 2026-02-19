@@ -35,16 +35,21 @@ jobs:
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
           New-NetFirewallRule -DisplayName "RDP Custom" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -ErrorAction SilentlyContinue
           
-          # Create user
+          # Create a secure random password
           $username = "rdpuser"
           $passPlain = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 16 | ForEach-Object {[char]$_})
           
-          net user $username /delete 2>$null
+          # Delete user only if it exists (avoids error on fresh runner)
+          if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
+            net user $username /delete
+          }
+          
+          # Create the user and add to groups
           net user $username $passPlain /add /y
           net localgroup Administrators $username /add
           net localgroup "Remote Desktop Users" $username /add
           
-          # Save password to environment
+          # Save password to GitHub environment
           "PASSWORD=$passPlain" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "User created: $username"
 
@@ -71,7 +76,7 @@ jobs:
                 Write-Host "Download attempt $retryCount failed: $_"
                 if ($retryCount -eq $maxRetries) {
                   Write-Host "ERROR: Failed to download VanitySearch after $maxRetries attempts."
-                  exit 1   # Fail the job so user knows tool is missing
+                  exit 1
                 }
                 Start-Sleep -Seconds 5
               }
@@ -81,7 +86,7 @@ jobs:
             exit 1
           }
 
-          # Create README
+          # Create README and batch file (same as before)
           $readmeLines = @(
             "Bitcoin Vanity Address Generator (v1.19)",
             "",
@@ -98,7 +103,6 @@ jobs:
           $readmeContent = $readmeLines -join "`r`n"
           Set-Content -Path "$toolsDir\README.txt" -Value $readmeContent -Encoding UTF8
 
-          # Create batch file
           $batLines = @(
             "@echo off",
             "title Bitcoin Vanity Tools",
