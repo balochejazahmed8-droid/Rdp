@@ -23,41 +23,43 @@ jobs:
       - name: Install Desktop Environment and xrdp
         run: |
           sudo apt update
-          # Install XFCE (lightweight) and xrdp
           sudo apt install -y xfce4 xfce4-goodies xrdp
-          # Configure xrdp to use XFCE
           echo xfce4-session > ~/.xsession
           sudo systemctl enable xrdp
           sudo systemctl restart xrdp
-          # Allow RDP port in firewall
           sudo ufw allow 3389/tcp || true
 
       - name: Create RDP User
         run: |
           USERNAME="linuxuser"
           PASSWORD=$(openssl rand -base64 12 | tr -d "=+/" | cut -c1-16)
-          # Create user with home directory
           sudo useradd -m -s /bin/bash $USERNAME
           echo "$USERNAME:$PASSWORD" | sudo chpasswd
-          # Add to groups
           sudo usermod -aG sudo $USERNAME
           sudo usermod -aG xrdp $USERNAME
-          # Store credentials
           echo "RDP_USER=$USERNAME" >> $GITHUB_ENV
           echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
 
-      - name: Install Bitcoin Vanity Tools (compile from source)
+      - name: Install Bitcoin Vanity Tools (compiled with Timer fix)
         run: |
           # Install build dependencies
           sudo apt update
           sudo apt install -y git build-essential libssl-dev
 
-          # Clone and compile VanitySearch
+          # Clone repository
           git clone https://github.com/JeanLucPons/VanitySearch.git
           cd VanitySearch
+
+          # PATCH: Add missing Timer.h include to fix compilation error
+          echo "Applying Timer fix..."
+          sed -i '1i#include "Timer.h"' main.cpp
+          # Also patch any other files that use Timer::getSeed32
+          grep -l "rseed(Timer::" *.cpp | xargs -I {} sed -i '1i#include "Timer.h"' {} 2>/dev/null || true
+
+          # Compile
           make
 
-          # Create tools directory and copy binary
+          # Prepare tools directory
           mkdir -p ~/BitcoinTools
           cp VanitySearch ~/BitcoinTools/
           cd ~/BitcoinTools
@@ -68,7 +70,7 @@ jobs:
           Bitcoin Vanity Address Generator (Linux)
           ========================================
 
-          Compiled from source.
+          Compiled from source with Timer fix.
 
           Usage: ./VanitySearch [options] prefix
           Example: ./VanitySearch 1Ejaz
@@ -76,7 +78,7 @@ jobs:
           For full options: ./VanitySearch --help
           EOF
 
-          # Create desktop shortcut for the user
+          # Create desktop shortcut for the RDP user
           sudo mkdir -p /home/linuxuser/Desktop
           sudo bash -c "cat > /home/linuxuser/Desktop/VanitySearch.desktop << 'EOF'
           [Desktop Entry]
