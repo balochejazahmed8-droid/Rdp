@@ -1,10 +1,10 @@
-name: RDP with Bitcoin Tools
+name: Linux RDP with Bitcoin Tools
 
 on: workflow_dispatch
 
 jobs:
   setup:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest                # Use Ubuntu runner
     timeout-minutes: 300
 
     steps:
@@ -14,155 +14,99 @@ jobs:
           authkey: ${{ secrets.TS_AUTH_KEY }}
 
       - name: Get Tailscale IP
-        shell: powershell
         run: |
-          Start-Sleep -Seconds 10
-          $ip = (tailscale ip -4).Trim()
-          if ($ip) {
-            Write-Output $ip | Out-File -FilePath "$env:GITHUB_WORKSPACE\ip.txt" -Encoding ascii
-            Write-Host "Tailscale IP: $ip"
-          } else {
-            Write-Host "ERROR: Failed to get Tailscale IP"
-            exit 1
-          }
+          sleep 10
+          IP=$(tailscale ip -4)
+          echo "RDP_IP=$IP" >> $GITHUB_ENV
+          echo "Tailscale IP: $IP"
 
-      - name: Enable RDP and Create User
-        shell: powershell
+      - name: Install Desktop Environment and xrdp
         run: |
-          # Enable RDP
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0 -Force
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
-          New-NetFirewallRule -DisplayName "RDP Custom" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -ErrorAction SilentlyContinue
+          sudo apt update
+          # Install XFCE (lightweight) and xrdp
+          sudo apt install -y xfce4 xfce4-goodies xrdp
+          # Configure xrdp to use XFCE
+          echo xfce4-session > ~/.xsession
+          sudo systemctl enable xrdp
+          sudo systemctl restart xrdp
+          # Allow RDP port in firewall (ufw not active by default on GitHub runners)
+          sudo ufw allow 3389/tcp || true
+
+      - name: Create RDP User
+        run: |
+          USERNAME="linuxuser"
+          PASSWORD=$(openssl rand -base64 12 | tr -d "=+/" | cut -c1-16)
+          # Create user with home directory
+          sudo useradd -m -s /bin/bash $USERNAME
+          echo "$USERNAME:$PASSWORD" | sudo chpasswd
+          # Add user to groups for RDP
+          sudo usermod -aG sudo $USERNAME   # sudo group for admin rights
+          sudo usermod -aG xrdp $USERNAME   # xrdp group (if exists)
+          # Store credentials in environment
+          echo "RDP_USER=$USERNAME" >> $GITHUB_ENV
+          echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
+          echo "User created: $USERNAME"
+
+      - name: Install Bitcoin Vanity Tools (VanitySearch)
+        run: |
+          mkdir -p ~/BitcoinTools
+          cd ~/BitcoinTools
+          # Download pre-compiled Linux binary from VanitySearch releases
+          wget https://github.com/JeanLucPons/VanitySearch/releases/download/1.19/VanitySearch
+          chmod +x VanitySearch
+          # Create README
+          cat > README.txt << EOF
+          Bitcoin Vanity Address Generator (Linux version)
           
-          # Create a secure random password
-          $username = "rdpuser"
-          $passPlain = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 16 | ForEach-Object {[char]$_})
-          
-          # Delete user only if it exists (avoids error on fresh runner)
-          if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
-            net user $username /delete
-          }
-          
-          # Create the user and add to groups
-          net user $username $passPlain /add /y
-          net localgroup Administrators $username /add
-          net localgroup "Remote Desktop Users" $username /add
-          
-          # Save password to GitHub environment
-          "PASSWORD=$passPlain" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "User created: $username"
+          Usage: ./VanitySearch [options] prefix
+          Example: ./VanitySearch 1Ejaz
+          More options: ./VanitySearch --help
+          EOF
+          # Create desktop shortcut (optional, but we'll add a launcher to ~/Desktop)
+          mkdir -p ~/Desktop
+          cat > ~/Desktop/VanitySearch.desktop << EOF
+          [Desktop Entry]
+          Name=VanitySearch
+          Comment=Bitcoin Vanity Address Generator
+          Exec=/home/linuxuser/BitcoinTools/VanitySearch
+          Icon=utilities-terminal
+          Terminal=true
+          Type=Application
+          Categories=Application;
+          EOF
+          chmod +x ~/Desktop/VanitySearch.desktop
+          echo "Bitcoin tools installed in /home/linuxuser/BitcoinTools"
 
-      - name: Setup Bitcoin Vanity Tools
-        shell: powershell
+      - name: Display Connection Information
         run: |
-          $toolsDir = "C:\BitcoinVanity"
-          New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+          echo ""
+          echo "================================================="
+          echo "         LINUX RDP CONNECTION READY             "
+          echo "================================================="
+          echo ""
+          echo "CONNECTION DETAILS:"
+          echo "IP Address:     ${{ env.RDP_IP }}"
+          echo "Username:       ${{ env.RDP_USER }}"
+          echo "Password:       ${{ env.RDP_PASS }}"
+          echo ""
+          echo "CONNECT USING:"
+          echo "On Windows: mstsc /v:${{ env.RDP_IP }}"
+          echo "On Linux: use any RDP client (Remmina, KRDC)"
+          echo ""
+          echo "DESKTOP ENVIRONMENT: XFCE (lightweight)"
+          echo "BITCOIN TOOLS: ~/BitcoinTools (VanitySearch)"
+          echo ""
+          echo "SESSION DURATION: up to 5 hours (keep-alive active)"
+          echo "================================================="
 
-          Write-Host "Downloading VanitySearch v1.19..."
-          $vsUrl = "https://github.com/JeanLucPons/VanitySearch/releases/download/1.19/VanitySearch.exe"
-          $vsPath = "$toolsDir\VanitySearch.exe"
-
-          try {
-            $retryCount = 0
-            $maxRetries = 3
-            while ($retryCount -lt $maxRetries) {
-              try {
-                Invoke-WebRequest -Uri $vsUrl -OutFile $vsPath -UseBasicParsing -TimeoutSec 120
-                Write-Host "VanitySearch downloaded successfully"
-                break
-              } catch {
-                $retryCount++
-                Write-Host "Download attempt $retryCount failed: $_"
-                if ($retryCount -eq $maxRetries) {
-                  Write-Host "ERROR: Failed to download VanitySearch after $maxRetries attempts."
-                  exit 1
-                }
-                Start-Sleep -Seconds 5
-              }
-            }
-          } catch {
-            Write-Host "Fatal error during download: $_"
-            exit 1
-          }
-
-          # Create README and batch file (same as before)
-          $readmeLines = @(
-            "Bitcoin Vanity Address Generator (v1.19)",
-            "",
-            "File: VanitySearch.exe is ready in this folder.",
-            "",
-            "Quick examples:",
-            "  VanitySearch.exe 1Ejaz         # Search for addresses starting with 1Ejaz",
-            "  VanitySearch.exe -t 0 1Love    # Use all CPU threads",
-            "  VanitySearch.exe -gpu 1My      # Try GPU mode (not available on GitHub)",
-            "",
-            "More options:",
-            "  VanitySearch.exe --help"
-          )
-          $readmeContent = $readmeLines -join "`r`n"
-          Set-Content -Path "$toolsDir\README.txt" -Value $readmeContent -Encoding UTF8
-
-          $batLines = @(
-            "@echo off",
-            "title Bitcoin Vanity Tools",
-            "echo Bitcoin Vanity Address Generator",
-            "echo ================================",
-            "echo.",
-            "echo Tool: VanitySearch.exe",
-            "echo Location: %~dp0",
-            "echo.",
-            "echo Examples:",
-            "echo   VanitySearch.exe 1Ejaz",
-            "echo   VanitySearch.exe -t 0 1Love",
-            "echo.",
-            "echo Check README.txt for more details",
-            "echo.",
-            "pause"
-          )
-          $batContent = $batLines -join "`r`n"
-          Set-Content -Path "$toolsDir\start.bat" -Value $batContent -Encoding ASCII
-
-          Write-Host "Tools folder created: $toolsDir"
-
-      - name: Show Connection Info
-        shell: powershell
+      - name: Keep Session Alive
         run: |
-          Write-Host ""
-          Write-Host "======================================"
-          Write-Host "    RDP + BITCOIN VANITY TOOLS READY"
-          Write-Host "======================================"
-          Write-Host ""
-
-          $ipPath = "$env:GITHUB_WORKSPACE\ip.txt"
-          if (Test-Path $ipPath) {
-            $ip = Get-Content $ipPath -Raw
-            Write-Host "Tailscale IP: $ip"
-            Write-Host "Connect: mstsc /v:$ip"
-          } else {
-            Write-Host "ERROR: No IP file found"
-          }
-
-          Write-Host ""
-          Write-Host "Username: rdpuser"
-          Write-Host "Password: $($env:PASSWORD)"
-          Write-Host ""
-          Write-Host "Tools location: C:\BitcoinVanity"
-          Write-Host ""
-          Write-Host "Note: Session will stay active for 5 hours (job timeout)"
-          Write-Host "======================================"
-
-      - name: Keep Session Alive (Idle Wait)
-        shell: powershell
-        run: |
-          Write-Host "Job will remain active for 5 hours. You can RDP into the machine."
-          Write-Host "The runner will shut down automatically after 5 hours."
-          $endTime = (Get-Date).AddHours(5)
-          Write-Host "Current time: $(Get-Date)"
-          Write-Host "End time: $endTime"
-          while ((Get-Date) -lt $endTime) {
-            $remaining = ($endTime - (Get-Date)).TotalMinutes
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Time remaining: $([math]::Round($remaining)) minutes"
-            Start-Sleep -Seconds 60
-          }
-          Write-Host "Session timeout reached. Shutting down..."
+          echo "Keeping session active for 5 hours..."
+          # Simple loop that prints every 5 minutes
+          END=$((SECONDS + 18000))  # 5 hours = 18000 seconds
+          while [ $SECONDS -lt $END ]; do
+            echo "[$(date +%H:%M:%S)] Session active - $(($END - $SECONDS)) seconds remaining"
+            # Optional: simulate activity (e.g., touch a file, but not necessary)
+            sleep 300   # 5 minutes
+          done
+          echo "Session timeout reached."
